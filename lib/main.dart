@@ -1,0 +1,14 @@
+import 'package:flutter/material.dart';
+import 'dart:math' as math;
+void main()=>runApp(MaterialApp(home:Game(),debugShowCheckedModeBanner:false));
+class Game extends StatefulWidget{ @override _GameState createState()=>_GameState();}
+class _GameState extends State<Game>{
+int lv=1,xp=0,need=100; String rank="Slime Bebe"; String luna="Hola! Soy Luna 🌸 Toca bloques!";
+double px=0,py=0; List<List<int>> w=[];
+@override void initState(){super.initState();w=List.generate(20,(y)=>List.generate(30,(x)=>math.Random().nextInt(3)==0?1:0));}
+void addXp(int v){setState((){xp+=v;if(xp>=need){lv++;xp=0;need=(need*1.3).toInt();rank=lv<10?"Slime Bebe":lv<20?"Rey Slime 👑":lv<45?"Humanoide Slime":"Humano Despertado ✨";luna="¡Nivel $lv $rank! 🎉";}});}
+@override Widget build(BuildContext c){return Scaffold(backgroundColor:Color(0xFF0a1a0f),body:Stack(children:[GestureDetector(onTapDown:(d){int gx=(d.localPosition.dx/20).floor();int gy=(d.localPosition.dy/20).floor();if(gx>=0&&gx<30&&gy>=0&&gy<20){setState(()=>w[gy][gx]=w[gy][gx]==0?1:0);addXp(10);luna=["¡Bien! 🧱","¡Sigue! 💪","¡Pro! ⭐"][math.Random().nextInt(3)];}},child:CustomPaint(size:Size.infinite,painter:P(w,px,py,lv))),Positioned(top:40,left:10,right:10,child:Container(padding:EdgeInsets.all(8),decoration:BoxDecoration(color:Colors.black54,borderRadius:BorderRadius.circular(20)),child:Text("Lv $lv $rank - XP $xp/$need",style:TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)))),Positioned(top:80,right:10,child:Column(children:[Container(width:50,height:50,decoration:BoxDecoration(color:Colors.pinkAccent,shape:BoxShape.circle),child:Center(child:Text("🌸"))),Container(width:160,padding:EdgeInsets.all(8),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(10)),child:Text(luna,style:TextStyle(fontSize:11,color:Colors.black)))])),Positioned(bottom:20,left:0,right:0,child:Row(mainAxisAlignment:MainAxisAlignment.center,children:[_b("◀",(){setState(()=>px-=1);}),_b("▶",(){setState(()=>px+=1);}),_b("▲",(){setState(()=>py-=1);}),_b("▼",(){setState(()=>py+=1);}),_b("ROMPER",(){addXp(5);},color:Colors.redAccent)]))])));}
+Widget _b(String t,VoidCallback f,{Color c=Colors.white24}){return GestureDetector(onTap:f,child:Container(margin:EdgeInsets.all(4),padding:EdgeInsets.symmetric(horizontal:12,vertical:10),decoration:BoxDecoration(color:c,borderRadius:BorderRadius.circular(10)),child:Text(t,style:TextStyle(fontWeight:FontWeight.bold))));}
+}
+class P extends CustomPainter{List<List<int>> w; double px,py; int lv; P(this.w,this.px,this.py,this.lv);
+@override void paint(Canvas c,Size s){Paint p=Paint();for(int y=0;y<w.length;y++){for(int x=0;x<w[0].length;x++){if(w[y][x]==1){p.color=Colors.green[800]!;c.drawRect(Rect.fromLTWH(x*20+px*10,y*20+py*10,18,18),p);}}}double cx=s.width/2,cy=s.height/2;p.color=lv<45?Colors.cyanAccent:Colors.orangeAccent;c.drawCircle(Offset(cx,cy),lv<45?20:15,p);}@override bool shouldRepaint(old)=>true;}
