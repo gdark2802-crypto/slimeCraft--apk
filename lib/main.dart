@@ -1,101 +1,187 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 
-void main() => runApp(MaterialApp(debugShowCheckedModeBanner: false, home: SlimeCraft()));
+void main() => runApp(MaterialApp(debugShowCheckedModeBanner: false, home: HubScreen()));
 
-class SlimeCraft extends StatefulWidget {
-  @override
-  _SlimeCraftState createState() => _SlimeCraftState();
-}
+// ============ HUB PRINCIPAL ============
+class HubScreen extends StatefulWidget { @override State<HubScreen> createState() => _HubScreenState(); }
+class _HubScreenState extends State<HubScreen> {
+  bool showMP = false;
+  String myIP = "192.168.43.1";
+  String status = "Offline";
+  bool isHost = false, isConnected = false;
+  ServerSocket? server; List<Socket> clients=[]; Socket? clientSock;
+  List<PlayerMP> players=[]; String myName="Player${Random().nextInt(99)}";
+  TextEditingController ipCtrl = TextEditingController(text:"192.168.43.1");
 
-class _SlimeCraftState extends State<SlimeCraft> with SingleTickerProviderStateMixin {
-  double slimeX = 100, slimeY = 200;
-  double velY = 0, velX = 0;
-  bool onGround = false, left = false, right = false;
-  int coins = 0, score = 0;
-  List<Rect> blocks = [];
-  List<Offset> coinsPos = [];
-  late Timer gameLoop;
+  @override void initState(){ super.initState(); _getIP(); }
+  Future<void> _getIP() async { try{ for(var i in await NetworkInterface.list()){ for(var a in i.addresses){ if(a.type==InternetAddressType.IPv4 &&!a.isLoopback){ setState((){ myIP=a.address; ipCtrl.text=myIP; }); } } } }catch(_){} }
 
-  @override
-  void initState() {
-    super.initState();
-    // Nivel tipo Minecraft
-    blocks = [
-      Rect.fromLTWH(0, 500, 800, 40),
-      Rect.fromLTWH(200, 420, 120, 20),
-      Rect.fromLTWH(400, 350, 120, 20),
-      Rect.fromLTWH(150, 280, 120, 20),
-      Rect.fromLTWH(350, 200, 200, 20),
-    ];
-    coinsPos = [Offset(240, 390), Offset(440, 320), Offset(190, 250), Offset(400, 170)];
-    
-    gameLoop = Timer.periodic(Duration(milliseconds: 16), (t) {
-      setState(() {
-        // gravedad
-        velY += 0.8;
-        slimeY += velY;
-        if (left) slimeX -= 5;
-        if (right) slimeX += 5;
-        
-        // colisiones
-        onGround = false;
-        Rect slimeRect = Rect.fromLTWH(slimeX, slimeY, 50, 40);
-        for (var b in blocks) {
-          if (slimeRect.overlaps(b) && velY > 0 && slimeY + 40 < b.top + 15) {
-            slimeY = b.top - 40;
-            velY = 0;
-            onGround = true;
-          }
-        }
-        if (slimeY > 600) { slimeY = 100; slimeX = 100; velY = 0; }
-        
-        // monedas
-        coinsPos.removeWhere((c) {
-          if ((slimeX - c.dx).abs() < 40 && (slimeY - c.dy).abs() < 40) {
-            coins++; score += 10; return true;
-          }
-          return false;
-        });
-        if (coinsPos.isEmpty) {
-          coinsPos = [Offset(240, 390), Offset(440, 320), Offset(190, 250), Offset(400, 170)];
-        }
+  Future<void> hostGame() async {
+    try{
+      server = await ServerSocket.bind(InternetAddress.anyIPv4, 4040);
+      setState((){ isHost=true; isConnected=true; status="HOST $myIP:4040 - ${clients.length} jugadores"; showMP=false; });
+      server!.listen((Socket c){
+        clients.add(c);
+        c.listen((d){ _handle(utf8.decode(d)); });
+        setState(()=> status="HOST ${clients.length} conectados");
       });
-    });
+    }catch(e){ setState(()=> status="Error: $e"); }
   }
+  Future<void> joinGame(String ip) async {
+    try{
+      clientSock = await Socket.connect(ip, 4040);
+      setState((){ isConnected=true; status="CONECTADO a $ip"; showMP=false; });
+      clientSock!.listen((d){ _handle(utf8.decode(d)); });
+      clientSock!.write(jsonEncode({'type':'join','name':myName})+"\n");
+    }catch(e){ setState(()=> status="Error JOIN: $e"); }
+  }
+  void _handle(String raw){ for(var line in raw.split("\n")){ if(line.isEmpty) continue; try{ var m=jsonDecode(line); if(m['type']=='pos'){ setState((){ int i=players.indexWhere((p)=>p.name==m['name']); if(i==-1) players.add(PlayerMP(m['x'],m['y'],m['name'])); else { players[i].x=m['x']; players[i].y=m['y']; } }); } }catch(_){} } }
+  void stopMP(){ server?.close(); clientSock?.close(); for(var c in clients) c.close(); setState((){ isHost=false; isConnected=false; players.clear(); status="Offline"; }); }
 
-  void jump() { if (onGround) { velY = -18; onGround = false; } }
-
-  @override
-  Widget build(BuildContext context) {
+  @override Widget build(BuildContext context){
     return Scaffold(
-      backgroundColor: Color(0xFF87CEEB),
-      body: Stack(
-        children: [
-          // bloques
-          ...blocks.map((b) => Positioned(
-            left: b.left, top: b.top, width: b.width, height: b.height,
-            child: Container(decoration: BoxDecoration(color: Color(0xFF8B4513), border: Border.all(color: Color(0xFF5D2E0C), width: 3)), child: Container(margin: EdgeInsets.all(4), color: Color(0xFF4CAF50))),
-          )),
-          // monedas
-          ...coinsPos.map((c) => Positioned(left: c.dx, top: c.dy, child: Container(width: 24, height: 24, decoration: BoxDecoration(color: Colors.yellow, shape: BoxShape.circle, border: Border.all(color: Colors.orange, width: 2))))),
-          // slime
-          Positioned(left: slimeX, top: slimeY, child: Container(width: 50, height: 40, decoration: BoxDecoration(color: Color(0xFF7ED957), borderRadius: BorderRadius.vertical(top: Radius.circular(20)), border: Border.all(color: Colors.green.shade800, width: 2)), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Container(width: 8, height: 8, decoration: BoxDecoration(color: Colors.black, shape: BoxShape.circle)), SizedBox(width: 12), Container(width: 8, height: 8, decoration: BoxDecoration(color: Colors.black, shape: BoxShape.circle))]))),
-          // UI
-          Positioned(top: 40, left: 20, child: Text("SLIMECRAFT 🟩\nMonedas: $coins  Score: $score", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white, shadows: [Shadow(blurRadius: 4, color: Colors.black)]))),
-          // controles
-          Positioned(bottom: 20, left: 20, right: 20, child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Row(children: [
-              GestureDetector(onTapDown: (_) => left = true, onTapUp: (_) => left = false, child: _btn(Icons.arrow_back)),
-              SizedBox(width: 20),
-              GestureDetector(onTapDown: (_) => right = true, onTapUp: (_) => right = false, child: _btn(Icons.arrow_forward)),
+      backgroundColor: Color(0xFF0F0F0F),
+      body: Stack(children:[
+        // FONDO
+        Container(decoration: BoxDecoration(gradient: LinearGradient(colors:[Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460)], begin: Alignment.topLeft, end: Alignment.bottomRight))),
+        SafeArea(child: Column(children:[
+          Padding(padding: EdgeInsets.all(16), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children:[
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children:[
+              Text("SLIMECRAFT HUB", style: TextStyle(color: Colors.white, fontSize:22, fontWeight: FontWeight.w900, letterSpacing:2)),
+              Text("4 JUEGOS • SIN INTERNET • MULTIPLAYER", style: TextStyle(color: Colors.greenAccent, fontSize:10, fontWeight: FontWeight.bold)),
+              Container(margin: EdgeInsets.only(top:4), padding: EdgeInsets.symmetric(h:8,v:3), decoration: BoxDecoration(color: isConnected?Colors.green:Colors.white12, borderRadius: BorderRadius.circular(10)), child: Text(status, style: TextStyle(color: Colors.white, fontSize:10, fontWeight: FontWeight.bold))),
             ]),
-            GestureDetector(onTap: jump, child: Container(width: 80, height: 80, decoration: BoxDecoration(color: Colors.green, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 3)), child: Icon(Icons.arrow_upward, size: 40, color: Colors.white))),
+            GestureDetector(onTap: ()=>setState(()=>showMP=!showMP), child: Container(padding: EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.green, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.white, width:2)), child: Column(children:[Icon(Icons.wifi, color: Colors.white), Text("MULTI", style: TextStyle(color: Colors.white, fontSize:8, fontWeight: FontWeight.bold))]))),
           ])),
-        ],
-      ),
+          Expanded(child: GridView.count(crossAxisCount:2, padding: EdgeInsets.all(16), crossAxisSpacing:12, mainAxisSpacing:12, children:[
+            _gameCard("SLIMECRAFT 3D", "Continente 3D + Bloques", Color(0xFF4CAF50), Icons.landscape, (){ Navigator.push(context, MaterialPageRoute(builder: (_)=>SlimeWorld(players:players, myName:myName, isHost:isHost, clients:clients, clientSock:clientSock))); }),
+            _gameCard("TETRIS PRO", "Clásico infinito", Color(0xFF9C27B0), Icons.view_module, (){ Navigator.push(context, MaterialPageRoute(builder: (_)=>TetrisGame())); }),
+            _gameCard("CRAFTMINE", "Minecraft Lite", Color(0xFF8B4513), Icons.build, (){ Navigator.push(context, MaterialPageRoute(builder: (_)=>CraftMineGame())); }),
+            _gameCard("FREE FIRE LITE", "Battle Royale Offline 10 bots", Color(0xFFFF5722), Icons.gps_fixed, (){ Navigator.push(context, MaterialPageRoute(builder: (_)=>FreeFireLite())); }),
+          ])),
+          Padding(padding: EdgeInsets.all(12), child: Text("Toca MULTI > HOST para crear partida con Hotspot/WiFi/Bluetooth", style: TextStyle(color: Colors.white38, fontSize:10), textAlign: TextAlign.center)),
+        ])),
+
+        if(showMP) _multiPanel(),
+      ]),
     );
   }
-  Widget _btn(IconData i) => Container(width: 60, height: 60, decoration: BoxDecoration(color: Colors.black54, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)), child: Icon(i, color: Colors.white));
+
+  Widget _gameCard(String title, String desc, Color c, IconData ic, VoidCallback onTap){
+    return GestureDetector(onTap: onTap, child: Container(decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white, width:2), boxShadow:[BoxShadow(color: c.withOpacity(0.5), blurRadius:10, offset: Offset(0,5))]), child: Column(mainAxisAlignment: MainAxisAlignment.center, children:[
+      Icon(ic, size:50, color: Colors.white), SizedBox(height:8),
+      Text(title, style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize:14), textAlign: TextAlign.center),
+      Text(desc, style: TextStyle(color: Colors.white70, fontSize:9), textAlign: TextAlign.center),
+      SizedBox(height:8),
+      Container(padding: EdgeInsets.symmetric(h:12,v:4), decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(10)), child: Text("JUGAR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize:10))),
+    ])));
+  }
+
+  Widget _multiPanel(){
+    return Positioned.fill(child: Container(color: Colors.black87, child: Center(child: Container(width:340, padding: EdgeInsets.all(20), decoration: BoxDecoration(color: Color(0xFF1E1E1E), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.green, width:2)), child: Column(mainAxisSize: MainAxisSize.min, children:[
+      Text("MULTIJUGADOR", style: TextStyle(color: Colors.white, fontSize:20, fontWeight: FontWeight.bold)),
+      SizedBox(height:8), Text("FUNCIONA CON: HOTSPOT • WIFI • BLUETOOTH", style: TextStyle(color: Colors.greenAccent, fontSize:10, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+      SizedBox(height:12),
+      Container(padding: EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(10)), child: Column(children:[
+        Text("Tu IP: $myIP", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize:12)),
+        TextField(onChanged:(v)=>myName=v, decoration: InputDecoration(hintText:"Nombre: $myName", hintStyle: TextStyle(color: Colors.white24)), style: TextStyle(color: Colors.white), textAlign: TextAlign.center),
+      ])),
+      SizedBox(height:12),
+      Row(children:[Expanded(child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.green), onPressed: hostGame, child: Text("HOST\nHotspot/WiFi"))), SizedBox(width:8), Expanded(child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: stopMP, child: Text("SALIR"))) ]),
+      SizedBox(height:8),
+      TextField(controller: ipCtrl, decoration: InputDecoration(labelText:"IP del HOST", border: OutlineInputBorder()), style: TextStyle(color: Colors.white)),
+      SizedBox(height:8),
+      SizedBox(width: double.infinity, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.blue), onPressed: ()=>joinGame(ipCtrl.text), child: Text("JOIN - UNIRSE A PARTIDA"))),
+      SizedBox(height:8),
+      Container(padding: EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(8)), child: Text("COMO JUGAR:\n1. HOST: Prende Hotspot en tu cel\n2. AMIGOS: Conéctense a tu Hotspot\n3. TODOS: Abren HUB > MULTI > HOST/JOIN\n4. BLUETOOTH: Emparejen en Ajustes > Bluetooth primero", style: TextStyle(color: Colors.white60, fontSize:9))),
+      TextButton(onPressed: ()=>setState(()=>showMP=false), child: Text("CERRAR")),
+    ])))));
+  }
 }
+
+class PlayerMP{ double x,y; String name; PlayerMP(this.x,this.y,this.name); }
+
+// ============ JUEGO 1: SLIMECRAFT 3D ============
+class SlimeWorld extends StatefulWidget{
+  final List<PlayerMP> players; final String myName; final bool isHost; final List<Socket> clients; final Socket? clientSock;
+  SlimeWorld({required this.players, required this.myName, required this.isHost, required this.clients, this.clientSock});
+  @override State<SlimeWorld> createState()=>_SlimeWorldState();
+}
+class _SlimeWorldState extends State<SlimeWorld>{
+  double px=0,py=0,pz=5,ry=0.7,vy=0; bool onG=true, showMap=false, showInv=false; int sel=0;
+  List<List<List<int>>> cont=[]; List<Map> inv=[{'c':Color(0xFF4CAF50),'n':64},{'c':Color(0xFF8B4513),'n':32},{'c':Color(0xFF9E9E9E),'n':24},{'c':Color(0xFF5D4037),'n':16},{'c':Color(0xFFFFEB3B),'n':10},{'c':Color(0xFF2E7D32),'n':8}];
+  double jx=0,jy=0; Offset jp=Offset(50,50); bool ja=false;
+  @override void initState(){ super.initState(); cont=List.generate(40,(x)=>List.generate(40,(y){ double dx=(x-20)/20, dy=(y-20)/20, d=sqrt(dx*dx+dy*dy); double s=1-d*1.2; double h=(s*6).clamp(0,8); if(h<0.5) return [0]; h+=sin(x*0.5)*cos(y*0.5)*2; List<int> st=[]; int hi=h.toInt(); for(int z=0;z<hi;z++) st.add(z==hi-1?1:z>hi-4?2:3); return st; })); Timer.periodic(Duration(milliseconds:32),(t){ if(!mounted) return; setState((){ if(ja){ px+=jx*0.18; py+=jy*0.18; ry+=jx*0.03; } if(!onG){ vy-=0.04; pz+=vy; if(pz<=_h(px,py)+1.2){ pz=_h(px,py)+1.2; vy=0; onG=true; } } px=px.clamp(-18,18); py=py.clamp(-18,18); }); if(widget.isHost||widget.clientSock!=null){ var m=jsonEncode({'type':'pos','name':widget.myName,'x':px,'y':py})+"\n"; if(widget.isHost) for(var c in widget.clients) c.write(m); else widget.clientSock?.write(m); } }); }
+  double _h(double x,double y){ int ix=(x+20).toInt().clamp(0,39), iy=(y+20).toInt().clamp(0,39); return cont[ix][iy].length.toDouble(); }
+  @override Widget build(BuildContext context){ return Scaffold(body: Stack(children:[
+    Container(color: Color(0xFF87CEEB), child: CustomPaint(size: Size.infinite, painter: ContPainter(cont, px, py, pz, ry, widget.players))),
+    SafeArea(child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children:[ BackButton(color: Colors.white), Row(children:[ _btnTop("MAPA", Icons.map, ()=>setState(()=>showMap=!showMap)), SizedBox(width:6), _btnTop("BOLSA", Icons.backpack, ()=>setState(()=>showInv=!showInv)) ]) ])),
+    if(showMap) Positioned.fill(child: Container(color: Colors.black87, child: Column(children:[ SizedBox(height:40), Text("CONTINENTE + AMIGOS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), Expanded(child: Padding(padding: EdgeInsets.all(20), child: CustomPaint(painter: MapPainterMP(cont, px, py, widget.players), size: Size.infinite))), ElevatedButton(onPressed: ()=>setState(()=>showMap=false), child: Text("CERRAR")), SizedBox(height:20) ]))),
+    if(showInv) Positioned.fill(child: Container(color: Colors.black87, child: Center(child: Column(mainAxisSize: MainAxisSize.min, children:[ Text("INVENTARIO", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), Container(width:300, child: GridView.builder(shrinkWrap:true, gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount:3), itemCount:6, itemBuilder: (c,i)=>GestureDetector(onTap: ()=>setState((){ sel=i; showInv=false; }), child: Container(margin: EdgeInsets.all(6), decoration: BoxDecoration(color: inv[i]['c'], borderRadius: BorderRadius.circular(10), border: Border.all(color: sel==i?Colors.yellow:Colors.white, width: sel==i?4:2)), child: Center(child: Text("${inv[i]['n']}", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))))))), ElevatedButton(onPressed: ()=>setState(()=>showInv=false), child: Text("CERRAR")) ])))),
+    Positioned(left:15, bottom:90, child: GestureDetector(onPanStart: (d)=>setState(()=>ja=true), onPanUpdate: (d){ Offset delta=d.localPosition-Offset(50,50); double dist=sqrt(delta.dx*delta.dx+delta.dy*delta.dy); double ang=atan2(delta.dy,delta.dx); if(dist>50) dist=50; setState((){ jx=cos(ang)*dist/50; jy=sin(ang)*dist/50; jp=Offset(50+jx*50,50+jy*50); }); }, onPanEnd: (d)=>setState((){ ja=false; jx=0; jy=0; jp=Offset(50,50); }), child: Container(width:100,height:100, decoration: BoxDecoration(color: Colors.black26, shape: BoxShape.circle, border: Border.all(color: Colors.white38)), child: Stack(children:[ Positioned(left: jp.dx-20, top: jp.dy-20, child: Container(width:40,height:40, decoration: BoxDecoration(color: Colors.white70, shape: BoxShape.circle))) ])))),
+    Positioned(right:15, bottom:70, child: Column(children:[ _actBtn("SALTAR", Colors.green, (){ if(onG){ setState((){ vy=0.6; onG=false; }); } }), SizedBox(height:8), _actBtn("PICAR", Colors.orange, (){ int ix=(px+cos(ry)*2+20).toInt().clamp(0,39), iy=(py+sin(ry)*2+20).toInt().clamp(0,39); if(cont[ix][iy].length>1) setState(()=>cont[ix][iy].removeLast()); }), SizedBox(height:8), _actBtn("PONER", Colors.blue, (){ if(inv[sel]['n']>0){ int ix=(px+cos(ry)*2+20).toInt().clamp(0,39), iy=(py+sin(ry)*2+20).toInt().clamp(0,39); if(cont[ix][iy].length<10) setState((){ cont[ix][iy].add(sel+1); inv[sel]['n']--; }); } }) ])),
+  ])); }
+  Widget _btnTop(String t, IconData ic, VoidCallback f)=>GestureDetector(onTap:f, child: Container(padding: EdgeInsets.symmetric(h:10,v:6), decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)), child: Row(children:[Icon(ic, color: Colors.white, size:14), Text(t, style: TextStyle(color: Colors.white, fontSize:10, fontWeight: FontWeight.bold))])));
+  Widget _actBtn(String t, Color c, VoidCallback f)=>GestureDetector(onTap:f, child: Container(width:75,height:50, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.white, width:2)), child: Center(child: Text(t, style: TextStyle(color: Colors.white, fontSize:9, fontWeight: FontWeight.bold)))));
+}
+class ContPainter extends CustomPainter{ final List<List<List<int>>> cont; final double px,py,pz,ry; final List<PlayerMP> others; ContPainter(this.cont,this.px,this.py,this.pz,this.ry,this.others); @override void paint(Canvas canvas, Size s){ List<Map> toDraw=[]; for(int x=0;x<40;x++) for(int y=0;y<40;y++){ double dx=x-20-px, dy=y-20-py; double dist=sqrt(dx*dx+dy*dy); if(dist>16) continue; double h=cont[x][y].length.toDouble(); double sx=s.width/2+(dx*cos(ry)-dy*sin(ry))*20; double sy=s.height*0.6+(dx*sin(ry)+dy*cos(ry))*10-h*12-pz*8; toDraw.add({'x':sx,'y':sy,'d':dist,'cx':x,'cy':y}); } toDraw.sort((a,b)=>b['d'].compareTo(a['d'])); for(var b in toDraw){ int cx=b['cx'], cy=b['cy']; if(cont[cx][cy].isEmpty){ canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(b['x']-10,b['y']+6,20,10), Radius.circular(3)), Paint()..color=Color(0xFF4FC3F7).withOpacity(0.6)); } else { for(int z=0;z<cont[cx][cy].length;z++){ double by=b['y']-z*8; Color c=[Color(0xFF4CAF50),Color(0xFF8B4513),Color(0xFF9E9E9E),Color(0xFF5D4037),Color(0xFFFFEB3B),Color(0xFF2E7D32)][cont[cx][cy][z]-1]; Path top=Path()..moveTo(b['x'],by)..lineTo(b['x']+10,by-5)..lineTo(b['x'],by-10)..lineTo(b['x']-10,by-5)..close(); canvas.drawPath(top, Paint()..color=c); } } } for(var p in others){ double dx=p.x-px, dy=p.y-py; double sx=s.width/2+(dx*cos(ry)-dy*sin(ry))*20; double sy=s.height*0.6+(dx*sin(ry)+dy*cos(ry))*10-40; canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(sx-12, sy-10, 24, 20), Radius.circular(6)), Paint()..color=Colors.blue); } } @override bool shouldRepaint(covariant CustomPainter o)=>true; }
+class MapPainterMP extends CustomPainter{ final List<List<List<int>>> cont; final double px,py; final List<PlayerMP> others; MapPainterMP(this.cont,this.px,this.py,this.others); @override void paint(Canvas c, Size s){ double cell=min(s.width,s.height)/40; for(int x=0;x<40;x++) for(int y=0;y<40;y++){ double h=cont[x][y].length.toDouble(); Color col=h==0?Color(0xFF4FC3F7):h<4?Color(0xFF4CAF50):Color(0xFF9E9E9E); c.drawRect(Rect.fromLTWH(x*cell,y*cell,cell,cell), Paint()..color=col); } c.drawCircle(Offset((px+20)*cell,(py+20)*cell), 6, Paint()..color=Colors.red); for(var p in others) c.drawCircle(Offset((p.x+20)*cell,(p.y+20)*cell), 5, Paint()..color=Colors.blue); } @override bool shouldRepaint(covariant CustomPainter o)=>true; }
+
+// ============ JUEGO 2: TETRIS PRO ============
+class TetrisGame extends StatefulWidget{ @override State<TetrisGame> createState()=>_TetrisState(); }
+class _TetrisState extends State<TetrisGame>{
+  static const W=10,H=20;
+  List<List<int>> board=List.generate(H, (_)=>List.filled(W,0));
+  List<List<int>> piece=[]; int px=4, py=0, score=0, color=1;
+  List<List<List<int>>> shapes=[[[1,1,1,1]], [[1,1],[1,1]], [[1,1,1],[0,1,0]], [[1,1,0],[0,1,1]], [[0,1,1],[1,1,0]], [[1,1,1],[1,0,0]], [[1,1,1],[0,0,1]]];
+  Timer? timer;
+  @override void initState(){ super.initState(); _newPiece(); timer=Timer.periodic(Duration(milliseconds:400), (_)=>_down()); }
+  void _newPiece(){ var s=shapes[Random().nextInt(shapes.length)]; piece=s.map((r)=>List<int>.from(r)).toList(); px=4; py=0; color=Random().nextInt(6)+1; if(_collide(px,py,piece)){ timer?.cancel(); showDialog(context: context, builder: (_)=>AlertDialog(title: Text("Game Over $score"), actions:[ TextButton(onPressed: (){ Navigator.pop(context); setState((){ board=List.generate(H, (_)=>List.filled(W,0)); score=0; _newPiece(); }); }, child: Text("Reiniciar")) ])); } }
+  bool _collide(int x,int y,List<List<int>> p){ for(int r=0;r<p.length;r++) for(int c=0;c<p[r].length;c++) if(p[r][c]==1){ int nx=x+c, ny=y+r; if(nx<0||nx>=W||ny>=H||(ny>=0&&board[ny][nx]!=0)) return true; } return false; }
+  void _down(){ if(!_collide(px,py+1,piece)) setState(()=>py++); else { for(int r=0;r<piece.length;r++) for(int c=0;c<piece[r].length;c++) if(piece[r][c]==1 && py+r>=0) board[py+r][px+c]=color; int lines=0; for(int r=H-1;r>=0;r--) if(!board[r].contains(0)){ board.removeAt(r); board.insert(0,List.filled(W,0)); lines++; r++; } score+=lines*100; _newPiece(); setState((){}); } }
+  void _move(int dx){ if(!_collide(px+dx,py,piece)) setState(()=>px+=dx); }
+  void _rot(){ var r=List.generate(piece[0].length, (i)=>List.generate(piece.length, (j)=>piece[piece.length-1-j][i])); if(!_collide(px,py,r)) setState(()=>piece=r); }
+  @override Widget build(BuildContext context){ return Scaffold(backgroundColor: Colors.black, appBar: AppBar(title: Text("TETRIS - Score $score"), backgroundColor: Colors.purple, leading: BackButton()), body: Column(children:[
+    Expanded(child: Center(child: AspectRatio(aspectRatio: W/H, child: Container(color: Colors.grey[900], child: CustomPaint(painter: TetrisPainter(board, piece, px, py, color)))))),
+    Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children:[ ElevatedButton(onPressed: ()=>_move(-1), child: Icon(Icons.arrow_left)), ElevatedButton(onPressed: _rot, child: Icon(Icons.rotate_right)), ElevatedButton(onPressed: ()=>_move(1), child: Icon(Icons.arrow_right)), ElevatedButton(onPressed: _down, child: Icon(Icons.arrow_downward)) ]),
+    SizedBox(height:20),
+  ])); }
+}
+class TetrisPainter extends CustomPainter{ final List<List<int>> board, piece; final int px,py,color; TetrisPainter(this.board,this.piece,this.px,this.py,this.color); @override void paint(Canvas c, Size s){ double cw=s.width/10, ch=s.height/20; List<Color> cols=[Colors.transparent, Colors.cyan, Colors.yellow, Colors.purple, Colors.green, Colors.red, Colors.blue, Colors.orange]; for(int y=0;y<20;y++) for(int x=0;x<10;x++) if(board[y][x]!=0){ c.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(x*cw, y*ch, cw-1, ch-1), Radius.circular(3)), Paint()..color=cols[board[y][x]]); } for(int r=0;r<piece.length;r++) for(int cc=0;cc<piece[r].length;cc++) if(piece[r][cc]==1){ c.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH((px+cc)*cw, (py+r)*ch, cw-1, ch-1), Radius.circular(3)), Paint()..color=cols[color]); } } @override bool shouldRepaint(covariant CustomPainter o)=>true; }
+
+// ============ JUEGO 3: CRAFTMINE LITE ============
+class CraftMineGame extends StatefulWidget{ @override State<CraftMineGame> createState()=>_CraftState(); }
+class _CraftState extends State<CraftMineGame>{
+  double px=0,py=0; List<List<int>> world=List.generate(30, (_)=>List.filled(30,0));
+  @override void initState(){ super.initState(); for(int x=0;x<30;x++) for(int y=0;y<30;y++){ double d=sqrt(pow(x-15,2)+pow(y-15,2)); if(d<12) world[x][y]=1; } }
+  @override Widget build(BuildContext context){ return Scaffold(backgroundColor: Color(0xFF87CEEB), appBar: AppBar(title: Text("CRAFTMINE LITE"), backgroundColor: Color(0xFF8B4513), leading: BackButton()), body: Stack(children:[
+    GestureDetector(onPanUpdate: (d){ setState((){ px+=d.delta.dx*0.05; py+=d.delta.dy*0.05; px=px.clamp(-10,10); py=py.clamp(-10,10); }); }, child: CustomPaint(size: Size.infinite, painter: CraftPainter(world, px, py))),
+    Positioned(bottom:20, left:20, right:20, child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children:[
+      ElevatedButton(onPressed: (){ int ix=(15+px).toInt().clamp(0,29), iy=(15+py).toInt().clamp(0,29); setState(()=>world[ix][iy]=1); }, child: Text("PONER BLOQUE")),
+      ElevatedButton(onPressed: (){ int ix=(15+px).toInt().clamp(0,29), iy=(15+py).toInt().clamp(0,29); setState(()=>world[ix][iy]=0); }, child: Text("PICAR")),
+    ]))
+  ])); }
+}
+class CraftPainter extends CustomPainter{ final List<List<int>> world; final double px,py; CraftPainter(this.world,this.px,this.py); @override void paint(Canvas c, Size s){ for(int x=0;x<30;x++) for(int y=0;y<30;y++) if(world[x][y]==1){ double sx=s.width/2+(x-15-px)*20, sy=s.height/2+(y-15-py)*20; c.drawRect(Rect.fromLTWH(sx, sy, 18, 18), Paint()..color=Color(0xFF8B4513)); c.drawRect(Rect.fromLTWH(sx, sy, 18, 4), Paint()..color=Color(0xFF4CAF50)); } c.drawCircle(Offset(s.width/2, s.height/2), 10, Paint()..color=Colors.red); } @override bool shouldRepaint(covariant CustomPainter o)=>true; }
+
+// ============ JUEGO 4: FREE FIRE LITE OFFLINE ============
+class FreeFireLite extends StatefulWidget{ @override State<FreeFireLite> createState()=>_FFState(); }
+class _FFState extends State<FreeFireLite>{
+  double px=0,py=0, pr=0; int hp=100, kills=0; List<Map> bots=[]; List<Map> bullets=[]; double jx=0,jy=0; Offset jp=Offset(50,50); bool ja=false; double zone=300;
+  @override void initState(){ super.initState(); bots=List.generate(10, (i)=>{'x':Random().nextDouble()*400-200,'y':Random().nextDouble()*400-200,'hp':100,'alive':true}); Timer.periodic(Duration(milliseconds:32),(t){ if(!mounted) return; setState((){ if(ja){ px+=jx*3; py+=jy*3; pr=atan2(jy,jx); } for(var b in bots){ if(!b['alive']) continue; double dx=px-b['x'], dy=py-b['y']; double d=sqrt(dx*dx+dy*dy); if(d<250){ b['x']+=dx/d*0.8; b['y']+=dy/d*0.8; } } zone-=0.05; if(zone<50) zone=50; bullets.removeWhere((bu){ bu['x']+=cos(bu['r'])*8; bu['y']+=sin(bu['r'])*8; for(var bot in bots){ if(!bot['alive']) continue; if(sqrt(pow(bu['x']-bot['x'],2)+pow(bu['y']-bot['y'],2))<15){ bot['hp']-=25; if(bot['hp']<=0){ bot['alive']=false; kills++; } return true; } } return sqrt(bu['x']*bu['x']+bu['y']*bu['y'])>400; }); }); }); }
+  void _shoot(){ setState(()=>bullets.add({'x':px,'y':py,'r':pr})); }
+  @override Widget build(BuildContext context){ return Scaffold(body: Stack(children:[
+    Container(color: Color(0xFF2E7D32), child: CustomPaint(size: Size.infinite, painter: FFPainter(px, py, bots, bullets, zone, pr))),
+    SafeArea(child: Padding(padding: EdgeInsets.all(12), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children:[
+      Row(children:[ BackButton(color: Colors.white), Container(padding: EdgeInsets.symmetric(h:10,v:5), decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)), child: Text("HP $hp | KILLS $kills | ZONA ${zone.toInt()}", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize:12)))]),
+      Container(padding: EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(10)), child: Text("BATTLE ROYALE", style: TextStyle(color: Colors.white, fontSize:9, fontWeight: FontWeight.bold))),
+    ]))),
+    Positioned(left:15, bottom:20, child: GestureDetector(onPanStart: (d)=>setState(()=>ja=true), onPanUpdate: (d){ Offset delta=d.localPosition-Offset(50,50); double dist=sqrt(delta.dx*delta.dx+delta.dy*delta.dy); double ang=atan2(delta.dy,delta.dx); if(dist>50) dist=50; setState((){ jx=cos(ang)*dist/50; jy=sin(ang)*dist/50; jp=Offset(50+jx*50,50+jy*50); }); }, onPanEnd: (d)=>setState((){ ja=false; jx=0; jy=0; jp=Offset(50,50); }), child: Container(width:100,height:100, decoration: BoxDecoration(color: Colors.black26, shape: BoxShape.circle, border: Border.all(color: Colors.white38)), child: Stack(children:[ Positioned(left: jp.dx-20, top: jp.dy-20, child: Container(width:40,height:40, decoration: BoxDecoration(color: Colors.white70, shape: BoxShape.circle))) ])))),
+    Positioned(right:20, bottom:30, child: GestureDetector(onTap: _shoot, child: Container(width:80,height:80, decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle, border: Border.all(color: Colors.white, width:3)), child: Icon(Icons.gps_fixed, color: Colors.white, size:40)))),
+  ])); }
+}
+class FFPainter extends CustomPainter{ final double px,py,zone,pr; final List<Map> bots, bullets; FFPainter(this.px,this.py,this.bots,this.bullets,this.zone,this.pr); @override void paint(Canvas c, Size s){ c.save(); c.translate(s.width/2-px, s.height/2-py); c.drawCircle(Offset(0,0), zone, Paint()..color=Colors.white.withOpacity(0.2)..style=PaintingStyle.stroke..strokeWidth=4); c.drawCircle(Offset(0,0), zone, Paint()..color=Colors.red.withOpacity(0.05)); for(var b in bots){ if(!b['alive']) continue; c.drawCircle(Offset(b['x'], b['y']), 12, Paint()..color=Colors.orange); c.drawRect(Rect.fromLTWH(b['x']-15, b['y']-25, 30*(b['hp']/100), 4), Paint()..color=Colors.red); } for(var bu in bullets) c.drawCircle(Offset(bu['x'], bu['y']), 4, Paint()..color=Colors.yellow); c.save(); c.translate(px, py); c.rotate(pr); c.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(-8,-10,16,20), Radius.circular(4)), Paint()..color=Colors.blue); c.restore(); c.restore(); } @override bool shouldRepaint(covariant CustomPainter o)=>true; }
